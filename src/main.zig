@@ -195,11 +195,7 @@ fn runTui(
     while (!app.should_quit) {
         const event = try loop.nextEvent();
         switch (event) {
-            .key_press => |key| {
-                if (app.handleKey(key)) |command| {
-                    try runInteractive(io, &tty, &tty_buffer, &vx, &loop, &app, command);
-                }
-            },
+            .key_press => |key| app.handleKey(key),
             .winsize => |ws| try vx.resize(gpa, tty.writer(), ws),
             .snapshot_updated => {}, // repaint below
         }
@@ -211,60 +207,6 @@ fn runTui(
         app.draw(vx.window());
         try vx.render(tty.writer());
     }
-}
-
-/// Suspend the TUI, hand the real terminal to an interactive `ical`
-/// subcommand, then restore everything and refresh. The Tty is reinitialized
-/// in place — the Loop holds a pointer to it, so the address must not change.
-fn runInteractive(
-    io: std.Io,
-    tty: *vaxis.Tty,
-    tty_buffer: []u8,
-    vx: *vaxis.Vaxis,
-    loop: *vaxis.Loop(Event),
-    app: *app_mod.App,
-    command: app_mod.Interactive,
-) !void {
-    loop.stop();
-    vx.exitAltScreen(tty.writer()) catch {};
-    tty.writer().flush() catch {};
-    tty.deinit(); // restores cooked mode for the child
-
-    const argv: []const []const u8 = switch (command) {
-        .add => &.{ "ical", "add", "-i" },
-        .edit => &.{ "ical", "update", "--id", app.commandId(), "-i" },
-    };
-    // stdio inherits the restored terminal; errors surface in the child's
-    // own UI, so a failed spawn only means a missing `ical`.
-    if (std.process.spawn(io, .{ .argv = argv })) |child| {
-        // Shell etiquette, applied AFTER spawn so the child keeps the
-        // default disposition: a Ctrl-C in cooked mode signals the whole
-        // foreground process group — it's the child's to handle, not ours
-        // to die from mid-wait.
-        var ignore_action: std.c.Sigaction = .{
-            .handler = .{ .handler = std.c.SIG.IGN },
-            .mask = std.posix.sigemptyset(),
-            .flags = 0,
-        };
-        var previous_action: std.c.Sigaction = undefined;
-        const guarded = std.c.sigaction(.INT, &ignore_action, &previous_action) == 0;
-        defer if (guarded) {
-            _ = std.c.sigaction(.INT, &previous_action, null);
-        };
-
-        var mutable_child = child;
-        _ = mutable_child.wait(io) catch {};
-        app.flash = null;
-    } else |_| {
-        app.flash = "could not run `ical` — is it installed?";
-    }
-
-    tty.* = try vaxis.Tty.init(io, tty_buffer);
-    try loop.start();
-    try vx.enterAltScreen(tty.writer());
-    try vx.queryTerminal(tty.writer(), .fromSeconds(1));
-    vx.queueRefresh();
-    app.poller.wake(); // pick up whatever the command changed
 }
 
 /// --agenda: print today's events as plain text and exit 0 (ARCHITECTURE.md §10) —
@@ -370,7 +312,7 @@ test {
     _ = @import("ui/detail.zig");
     _ = @import("ui/help.zig");
     _ = @import("ui/search.zig");
-    _ = @import("ui/quickadd.zig");
+    _ = @import("ui/eventform.zig");
     _ = @import("ui/statusbar.zig");
     _ = @import("ui/theme.zig");
 }

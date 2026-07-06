@@ -16,7 +16,7 @@ const day_view = @import("ui/day.zig");
 const detail_view = @import("ui/detail.zig");
 const help_view = @import("ui/help.zig");
 const search_view = @import("ui/search.zig");
-const quickadd_view = @import("ui/quickadd.zig");
+const eventform = @import("ui/eventform.zig");
 const statusbar = @import("ui/statusbar.zig");
 
 const CivilDate = time_mod.CivilDate;
@@ -34,11 +34,6 @@ const scratch_size = 8 * 1024;
 
 pub const View = enum { month, day, detail };
 
-/// Commands that need the real terminal (the TUI suspends around them);
-/// main.zig owns the suspend/resume dance. The edit target id lives in
-/// App.command_id_buffer until the command runs.
-pub const Interactive = enum { add, edit };
-
 pub const App = struct {
     io: std.Io,
     zone: time_mod.Zone,
@@ -55,15 +50,12 @@ pub const App = struct {
     search_buffer: [search_view.max_query]u8 = undefined, // valid up to search_len
     search_len: usize = 0,
     search_index: usize = 0,
-    /// Quick-add form (the `a` overlay); buffers valid up to their lens.
-    quick_add_active: bool = false,
-    quick_add_field: quickadd_view.Field = .title,
-    quick_add_title: [quickadd_view.max_field]u8 = undefined,
-    quick_add_title_len: usize = 0,
-    quick_add_start: [quickadd_view.max_field]u8 = undefined,
-    quick_add_start_len: usize = 0,
-    quick_add_end: [quickadd_view.max_field]u8 = undefined,
-    quick_add_end_len: usize = 0,
+    /// The event form (`a` create / `e` edit); buffers valid up to lens.
+    form_active: bool = false,
+    form_mode: eventform.Mode = .add,
+    form_index: usize = 0,
+    form_buffers: [eventform.field_count][eventform.max_field]u8 = undefined,
+    form_lens: [eventform.field_count]usize = @splat(0),
     /// One-line transient result of the last action (static strings only);
     /// cleared on the next keypress.
     flash: ?[]const u8 = null,
@@ -89,85 +81,83 @@ pub const App = struct {
         };
     }
 
-    /// Returns a command main.zig must run with the terminal restored
-    /// (TUI suspended), or null when the key was fully handled here.
-    pub fn handleKey(self: *App, key: vaxis.Key) ?Interactive {
+    pub fn handleKey(self: *App, key: vaxis.Key) void {
         self.flash = null; // any keypress dismisses the last action result
         if (key.matches('c', .{ .ctrl = true })) {
             self.should_quit = true;
-            return null;
+            return;
         }
         // Text-input overlays consume every key while open — typed text
         // must not trigger bindings (a query containing "q" is not "back").
         if (self.search_active) {
             self.handleSearchKey(key);
-            return null;
+            return;
         }
-        if (self.quick_add_active) {
-            self.handleQuickAddKey(key);
-            return null;
+        if (self.form_active) {
+            self.handleFormKey(key);
+            return;
         }
         if (key.matches('Q', .{})) {
             self.should_quit = true;
-            return null;
+            return;
         }
         if (self.help_visible) {
             // Any key dismisses the overlay.
             self.help_visible = false;
-            return null;
+            return;
         }
         if (key.matches('?', .{})) {
             self.help_visible = true;
-            return null;
+            return;
         }
         if (key.matches('/', .{})) {
             self.search_active = true;
             self.search_len = 0;
             self.search_index = 0;
-            return null;
+            return;
         }
         if (key.matches('a', .{})) {
-            self.openQuickAdd();
-            return null;
-        }
-        if (key.matches('A', .{})) {
-            return .add; // full interactive `ical add -i`
+            self.openForm(.add);
+            return;
         }
         if (key.matches('q', .{}) or key.matches(vaxis.Key.escape, .{})) {
             self.back();
-            return null;
+            return;
         }
         if (key.matches('r', .{})) {
             self.poller.wake();
-            return null;
+            return;
         }
         if (key.matches('t', .{})) {
             self.selected = time_mod.localDate(poller_mod.nowUnix(self.io), self.zone);
             self.day_index = 0;
             self.ensureWindowCovers();
-            return null;
+            return;
         }
         // RSVP on the selected event works from day and detail views.
         if (self.view == .day or self.view == .detail) {
             if (key.matches('y', .{})) {
                 self.rsvpSelected("accepted");
-                return null;
+                return;
             }
             if (key.matches('n', .{})) {
                 self.rsvpSelected("declined");
-                return null;
+                return;
             }
             if (key.matches('m', .{})) {
                 self.rsvpSelected("tentative");
-                return null;
+                return;
+            }
+            if (key.matches('e', .{})) {
+                self.openForm(.edit);
+                return;
             }
         }
         switch (self.view) {
             .month => self.handleMonthKey(key),
             .day => self.handleDayKey(key),
-            .detail => return self.handleDetailKey(key),
+            .detail => self.handleDetailKey(key),
         }
-        return null;
     }
 
     /// One level up the view stack; no-op at the month view (Q quits).
@@ -272,7 +262,7 @@ pub const App = struct {
         }
     }
 
-    fn handleDetailKey(self: *App, key: vaxis.Key) ?Interactive {
+    fn handleDetailKey(self: *App, key: vaxis.Key) void {
         if (key.matches(vaxis.Key.up, .{}) or key.matches('k', .{})) {
             self.detail_scroll -|= 1;
         } else if (key.matches(vaxis.Key.down, .{}) or key.matches('j', .{})) {
@@ -281,16 +271,11 @@ pub const App = struct {
             if (self.copySelectedLink()) |link| self.openUrl(link);
         } else if (key.matches('c', .{})) {
             if (self.copySelectedLink()) |link| self.copyToClipboard(link);
-        } else if (key.matches('e', .{})) {
-            // Edit works for events you own (writable calendar); ical's own
-            // interactive UI reports anything it can't change.
-            if (self.copySelectedId() != null) return .edit;
         }
-        return null;
     }
 
-    /// The edit target for a pending Interactive.edit command.
-    pub fn commandId(self: *const App) []const u8 {
+    /// The edit target captured when the form opened.
+    fn commandId(self: *const App) []const u8 {
         return self.command_id_buffer[0..self.command_id_len];
     }
 
@@ -334,36 +319,102 @@ pub const App = struct {
         if (ok) self.poller.wake();
     }
 
-    fn openQuickAdd(self: *App) void {
-        self.quick_add_active = true;
-        self.quick_add_field = .title;
-        self.quick_add_title_len = 0;
-        self.quick_add_end_len = 0;
-        // Prefill the date you're standing on; type the time after it.
-        const prefill = std.fmt.bufPrint(&self.quick_add_start, "{d:0>4}-{d:0>2}-{d:0>2} ", .{
-            @as(u32, @intCast(self.selected.year)),
-            self.selected.month,
-            self.selected.day,
-        }) catch return;
-        self.quick_add_start_len = prefill.len;
+    /// Open the event form: blank-ish for add (date prefilled from the
+    /// selection), fully prefilled from the selected event for edit.
+    fn openForm(self: *App, mode: eventform.Mode) void {
+        self.form_mode = mode;
+        self.form_index = 0;
+        self.form_lens = @splat(0);
+
+        switch (mode) {
+            .add => {
+                // Prefill the date you're standing on; type the time after it.
+                self.setFormFieldFmt(.start, "{d:0>4}-{d:0>2}-{d:0>2} ", .{
+                    @as(u32, @intCast(self.selected.year)),
+                    self.selected.month,
+                    self.selected.day,
+                });
+            },
+            .edit => {
+                self.lockPoller();
+                defer self.unlockPoller();
+                const event = self.selectedEventLocked() orelse {
+                    self.flash = "no event selected";
+                    return;
+                };
+                if (event.id.len == 0 or event.id.len > self.command_id_buffer.len) {
+                    self.flash = "event has no editable id";
+                    return;
+                }
+                @memcpy(self.command_id_buffer[0..event.id.len], event.id);
+                self.command_id_len = event.id.len;
+
+                self.setFormField(.title, event.title);
+                self.setFormFieldTime(.start, event.start);
+                self.setFormFieldTime(.end, event.end);
+                if (event.all_day) self.setFormField(.all_day, "y");
+                self.setFormField(.calendar, event.calendar_name);
+                self.setFormField(.location, event.location);
+            },
+        }
+        self.form_active = true;
     }
 
-    fn handleQuickAddKey(self: *App, key: vaxis.Key) void {
+    fn setFormField(self: *App, field: eventform.Field, value: []const u8) void {
+        const i = @intFromEnum(field);
+        const len = @min(value.len, self.form_buffers[i].len);
+        @memcpy(self.form_buffers[i][0..len], value[0..len]);
+        self.form_lens[i] = len;
+    }
+
+    fn setFormFieldFmt(self: *App, field: eventform.Field, comptime fmt: []const u8, args: anytype) void {
+        const i = @intFromEnum(field);
+        const written = std.fmt.bufPrint(&self.form_buffers[i], fmt, args) catch return;
+        self.form_lens[i] = written.len;
+    }
+
+    /// Local "YYYY-MM-DD HH:MM" — the format `ical` prints and parses.
+    fn setFormFieldTime(self: *App, field: eventform.Field, unix: i64) void {
+        const civil = time_mod.civilFromUnix(unix, self.zone);
+        self.setFormFieldFmt(field, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}", .{
+            @as(u32, @intCast(civil.date.year)),
+            civil.date.month,
+            civil.date.day,
+            civil.time.hour,
+            civil.time.minute,
+        });
+    }
+
+    fn formValue(self: *const App, field: eventform.Field) []const u8 {
+        const i = @intFromEnum(field);
+        return std.mem.trim(u8, self.form_buffers[i][0..self.form_lens[i]], " ");
+    }
+
+    fn handleFormKey(self: *App, key: vaxis.Key) void {
+        const visible = eventform.fields(self.form_mode);
         if (key.matches(vaxis.Key.escape, .{})) {
-            self.quick_add_active = false;
+            self.form_active = false;
             return;
         }
-        if (key.matches(vaxis.Key.tab, .{}) or key.matches(vaxis.Key.enter, .{})) {
-            if (self.quick_add_field.next()) |next_field| {
-                self.quick_add_field = next_field;
-            } else if (key.matches(vaxis.Key.enter, .{})) {
-                self.submitQuickAdd();
+        if (key.matches(vaxis.Key.enter, .{})) {
+            if (self.form_index + 1 < visible.len) {
+                self.form_index += 1;
             } else {
-                self.quick_add_field = .title; // Tab wraps around
+                self.submitForm();
             }
             return;
         }
-        const buffer, const len = self.quickAddField();
+        if (key.matches(vaxis.Key.tab, .{}) or key.matches(vaxis.Key.down, .{})) {
+            self.form_index = (self.form_index + 1) % visible.len;
+            return;
+        }
+        if (key.matches(vaxis.Key.tab, .{ .shift = true }) or key.matches(vaxis.Key.up, .{})) {
+            self.form_index = if (self.form_index == 0) visible.len - 1 else self.form_index - 1;
+            return;
+        }
+        const i = @intFromEnum(visible[self.form_index]);
+        const buffer = &self.form_buffers[i];
+        const len = &self.form_lens[i];
         if (key.matches(vaxis.Key.backspace, .{})) {
             while (len.* > 0) {
                 len.* -= 1;
@@ -377,43 +428,88 @@ pub const App = struct {
         }
     }
 
-    fn quickAddField(self: *App) struct { []u8, *usize } {
-        return switch (self.quick_add_field) {
-            .title => .{ &self.quick_add_title, &self.quick_add_title_len },
-            .start => .{ &self.quick_add_start, &self.quick_add_start_len },
-            .end => .{ &self.quick_add_end, &self.quick_add_end_len },
-        };
-    }
-
-    /// Create the event via non-interactive `ical add` — it owns date
-    /// parsing and validation; we surface pass/fail.
-    fn submitQuickAdd(self: *App) void {
-        const title = std.mem.trim(u8, self.quick_add_title[0..self.quick_add_title_len], " ");
-        const start = std.mem.trim(u8, self.quick_add_start[0..self.quick_add_start_len], " ");
-        const end = std.mem.trim(u8, self.quick_add_end[0..self.quick_add_end_len], " ");
+    /// Build and run the `ical add`/`ical update` invocation. The CLI owns
+    /// date parsing and validation; we surface pass/fail.
+    fn submitForm(self: *App) void {
+        const title = self.formValue(.title);
+        const start = self.formValue(.start);
         if (title.len == 0 or start.len == 0) {
             self.flash = "title and when are required";
             return;
         }
-        const argv: []const []const u8 = if (end.len > 0)
-            &.{ "ical", "add", title, "-s", start, "-e", end }
-        else
-            &.{ "ical", "add", title, "-s", start };
-        const result = std.process.run(self.poller.gpa, self.io, .{ .argv = argv }) catch {
-            self.flash = "create failed — is `ical` installed?";
+        const all_day = std.ascii.startsWithIgnoreCase(self.formValue(.all_day), "y");
+
+        // Bounded argv assembly: base + 5 flag pairs + 8 invitations.
+        var argv_buffer: [32][]const u8 = undefined;
+        var argc: usize = 0;
+        const push = struct {
+            fn push(storage: *[32][]const u8, count: *usize, arg: []const u8) void {
+                if (count.* < storage.len) {
+                    storage[count.*] = arg;
+                    count.* += 1;
+                }
+            }
+        }.push;
+
+        push(&argv_buffer, &argc, "ical");
+        switch (self.form_mode) {
+            .add => {
+                push(&argv_buffer, &argc, "add");
+                push(&argv_buffer, &argc, title);
+                if (all_day) push(&argv_buffer, &argc, "-a");
+            },
+            .edit => {
+                push(&argv_buffer, &argc, "update");
+                push(&argv_buffer, &argc, "--id");
+                push(&argv_buffer, &argc, self.commandId());
+                push(&argv_buffer, &argc, "-T");
+                push(&argv_buffer, &argc, title);
+                push(&argv_buffer, &argc, "-a");
+                push(&argv_buffer, &argc, if (all_day) "true" else "false");
+            },
+        }
+        push(&argv_buffer, &argc, "-s");
+        push(&argv_buffer, &argc, start);
+        if (self.formValue(.end).len > 0) {
+            push(&argv_buffer, &argc, "-e");
+            push(&argv_buffer, &argc, self.formValue(.end));
+        }
+        if (self.formValue(.calendar).len > 0) {
+            push(&argv_buffer, &argc, "-c");
+            push(&argv_buffer, &argc, self.formValue(.calendar));
+        }
+        if (self.formValue(.location).len > 0) {
+            push(&argv_buffer, &argc, "-l");
+            push(&argv_buffer, &argc, self.formValue(.location));
+        }
+        if (self.form_mode == .add) {
+            var invitees = std.mem.tokenizeAny(u8, self.formValue(.invite), ", ");
+            while (invitees.next()) |email| {
+                push(&argv_buffer, &argc, "--invite");
+                push(&argv_buffer, &argc, email);
+            }
+        }
+
+        const result = std.process.run(self.poller.gpa, self.io, .{
+            .argv = argv_buffer[0..argc],
+        }) catch {
+            self.flash = "save failed — is `ical` installed?";
             return;
         };
         defer self.poller.gpa.free(result.stdout);
         defer self.poller.gpa.free(result.stderr);
         const ok = result.term == .exited and result.term.exited == 0;
         if (ok) {
-            self.flash = "event created ✓";
-            self.quick_add_active = false;
+            self.flash = switch (self.form_mode) {
+                .add => "event created ✓",
+                .edit => "event updated ✓",
+            };
+            self.form_active = false;
             self.poller.wake();
         } else {
             // Most common failure: ical couldn't parse the date. Keep the
             // form open so the text can be fixed.
-            self.flash = "create failed — check the date text";
+            self.flash = "save failed — check the date text";
         }
     }
 
@@ -552,12 +648,15 @@ pub const App = struct {
             .flash = self.flash,
         });
         if (self.help_visible) help_view.draw(win);
-        if (self.quick_add_active) {
-            quickadd_view.draw(win, scratch, .{
-                .title = self.quick_add_title[0..self.quick_add_title_len],
-                .start = self.quick_add_start[0..self.quick_add_start_len],
-                .end = self.quick_add_end[0..self.quick_add_end_len],
-                .active_field = self.quick_add_field,
+        if (self.form_active) {
+            var values: [eventform.field_count][]const u8 = undefined;
+            for (0..eventform.field_count) |i| {
+                values[i] = self.form_buffers[i][0..self.form_lens[i]];
+            }
+            eventform.draw(win, scratch, .{
+                .mode = self.form_mode,
+                .values = values,
+                .active_index = self.form_index,
             });
         }
         if (self.search_active) {

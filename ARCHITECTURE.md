@@ -75,11 +75,11 @@ section first):
   is written, so the poller must not free the old arena mid-frame. Draw +
   render is single-digit milliseconds; the poller blocking that long once a
   minute is the simple, correct trade.
-- Interactive subcommands (`A`, `e`) suspend the TUI: stop the loop, exit
-  the alt screen, deinit the Tty (restoring cooked mode), hand the terminal
-  to the child, reinit in place. SIGINT is ignored in the parent only
-  *after* spawn — cooked-mode Ctrl-C signals the whole foreground group, and
-  guarding before spawn would make the child inherit the ignore.
+- Calendar writes (`a` create, `e` edit, `y`/`n`/`m` RSVP) run
+  non-interactive `ical` subprocesses on the UI thread — a brief frozen
+  frame with a flash result beats concurrency machinery for a keypress.
+  The event form (`src/ui/eventform.zig`) is the single write UI; there is
+  deliberately no drop-out to `ical`'s own interactive prompts.
 
 ## §5 Data sources
 
