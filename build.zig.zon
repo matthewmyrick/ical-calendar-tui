@@ -1,0 +1,19 @@
+.{
+    .name = .ical_calendar_tui,
+    .version = "0.0.0",
+    .fingerprint = 0xf709905d492648d5, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .vaxis = .{
+            .url = "git+https://github.com/rockorager/libvaxis#ca781b3c01f44a92e5331652823b5a9ce445be96",
+            .hash = "vaxis-0.6.0-BWNV_Gz5CQBTx7g34RYMPTL-bJhsFCU3ECHQ-CZlBVsn",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "native",
+        "README.md",
+    },
+}

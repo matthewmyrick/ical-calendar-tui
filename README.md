@@ -26,7 +26,12 @@ ical-calendar-tui --agenda     # print today's events and exit
 
 ## Toolchain
 
-To be pinned at milestone 0 (see SPEC §3): Zig via `brew install zig`,
-[libvaxis](https://github.com/rockorager/libvaxis) for the TUI,
-[`ical`](https://ical.sidv.dev/) as the bootstrap data source, native
-EventKit shim from milestone 4.
+Pinned at milestone 0 (see SPEC §3):
+
+| Tool | Version | Source |
+|---|---|---|
+| Zig | 0.16.0 (`.zigversion`) | `brew install zig` |
+| [libvaxis](https://github.com/rockorager/libvaxis) | 0.6.0 @ `ca781b3c` (pinned by hash in `build.zig.zon`) | `zig fetch` |
+| [`ical`](https://ical.sidv.dev/) | 0.12.1 | `brew tap BRO3886/tap && brew install ical` |
+
+Native EventKit shim lands at milestone 4.
