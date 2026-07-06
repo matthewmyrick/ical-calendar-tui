@@ -15,11 +15,13 @@ const snapshot_mod = @import("../snapshot.zig");
 
 const CivilDate = time_mod.CivilDate;
 
+// Cell sizes include the shared border line on one edge; interiors are one
+// less in each dimension. The grid itself adds a final closing edge.
 const min_cell_width: u16 = 6;
-const max_cell_width: u16 = 26;
-const min_cell_height: u16 = 2;
-const max_cell_height: u16 = 7;
-/// Cells at least this wide show event titles instead of dots.
+const max_cell_width: u16 = 27;
+const min_cell_height: u16 = 3;
+const max_cell_height: u16 = 8;
+/// Cell interiors at least this wide show event titles instead of dots.
 const titles_from_width: u16 = 12;
 /// Peek lines under the grid for the selected day's events.
 const max_peek = 3;
@@ -50,17 +52,18 @@ const Layout = struct {
         const days: u16 = time_mod.daysInMonth(state.selected.year, state.selected.month);
         const weeks: u16 = (lead + days + 6) / 7;
 
-        const cell_width = std.math.clamp((win.width -| 2) / 7, min_cell_width, max_cell_width);
+        // -3: side margins plus the grid's closing right edge.
+        const cell_width = std.math.clamp((win.width -| 3) / 7, min_cell_width, max_cell_width);
         const grid_height = win.height -| (rows_above_grid + rows_below_grid);
         const cell_height = std.math.clamp(
-            if (weeks > 0) grid_height / weeks else min_cell_height,
+            if (weeks > 0) (grid_height -| 1) / weeks else min_cell_height,
             min_cell_height,
             max_cell_height,
         );
         return .{
             .cell_width = cell_width,
             .cell_height = cell_height,
-            .left = (win.width -| cell_width * 7) / 2,
+            .left = (win.width -| (cell_width * 7 + 1)) / 2,
             .weeks = weeks,
             .lead = lead,
         };
@@ -110,7 +113,7 @@ fn drawWeekdayHeader(win: vaxis.Window, week_start: config_mod.WeekStart, layout
             .sunday => (column + 6) % 7,
         };
         const name = time_mod.weekday_names_short[iso];
-        const x = layout.left + @as(u16, @intCast(column)) * layout.cell_width + 1;
+        const x = layout.left + @as(u16, @intCast(column)) * layout.cell_width + 2;
         printAt(win, x, 2, name, theme.subtle);
     }
 }
@@ -122,26 +125,92 @@ fn drawGrid(
     state: State,
     layout: Layout,
 ) void {
+    drawGridLines(win, layout);
+
     const first = CivilDate{ .year = state.selected.year, .month = state.selected.month, .day = 1 };
+    var today_cell: ?struct { column: u16, week: u16 } = null;
     var week: u16 = 0;
     while (week < layout.weeks) : (week += 1) {
         var column: u16 = 0;
         while (column < 7) : (column += 1) {
             const slot: i64 = @as(i64, week) * 7 + column - layout.lead;
             const date = time_mod.addDays(first, slot);
-            const cell = win.child(.{
-                .x_off = layout.left + column * layout.cell_width,
-                .y_off = rows_above_grid + week * layout.cell_height,
-                .width = layout.cell_width,
-                .height = layout.cell_height,
+            if (date.eql(state.today)) today_cell = .{ .column = column, .week = week };
+            const interior = win.child(.{
+                .x_off = layout.left + column * layout.cell_width + 1,
+                .y_off = rows_above_grid + week * layout.cell_height + 1,
+                .width = layout.cell_width - 1,
+                .height = layout.cell_height - 1,
             });
-            drawDayCell(cell, scratch, date, date.month == state.selected.month, snapshot, state);
+            drawDayCell(interior, scratch, date, date.month == state.selected.month, snapshot, state);
+        }
+    }
+    // Today's box repaints its border segments in the accent color, on top
+    // of the shared grid lines.
+    if (today_cell) |cell| drawCellBox(win, layout, cell.column, cell.week, theme.today);
+}
+
+/// The shared grid: one line between neighboring cells, junction glyphs at
+/// crossings (SPEC §7a).
+fn drawGridLines(win: vaxis.Window, layout: Layout) void {
+    const top = rows_above_grid;
+    const right_edge = layout.left + layout.cell_width * 7;
+
+    var line: u16 = 0;
+    while (line <= layout.weeks) : (line += 1) {
+        const y = top + line * layout.cell_height;
+        var x = layout.left;
+        while (x <= right_edge) : (x += 1) {
+            const on_column = (x - layout.left) % layout.cell_width == 0;
+            const glyph = if (!on_column)
+                "─"
+            else if (line == 0)
+                (if (x == layout.left) "┌" else if (x == right_edge) "┐" else "┬")
+            else if (line == layout.weeks)
+                (if (x == layout.left) "└" else if (x == right_edge) "┘" else "┴")
+            else
+                (if (x == layout.left) "├" else if (x == right_edge) "┤" else "┼");
+            writeGlyph(win, x, y, glyph, theme.border);
+        }
+    }
+
+    var column: u16 = 0;
+    while (column <= 7) : (column += 1) {
+        const x = layout.left + column * layout.cell_width;
+        var y = top + 1;
+        while (y < top + layout.weeks * layout.cell_height) : (y += 1) {
+            if ((y - top) % layout.cell_height == 0) continue; // junction row
+            writeGlyph(win, x, y, "│", theme.border);
         }
     }
 }
 
-/// One day cell: number row (full-width highlight when selected), then
-/// either event-title lines (wide cells) or a dot row (narrow cells).
+/// Repaint one cell's border rectangle in `style` (plain corners — reads as
+/// a highlight box sitting on top of the grid).
+fn drawCellBox(win: vaxis.Window, layout: Layout, column: u16, week: u16, style: vaxis.Style) void {
+    const x0 = layout.left + column * layout.cell_width;
+    const y0 = rows_above_grid + week * layout.cell_height;
+    const x1 = x0 + layout.cell_width;
+    const y1 = y0 + layout.cell_height;
+
+    writeGlyph(win, x0, y0, "┌", style);
+    writeGlyph(win, x1, y0, "┐", style);
+    writeGlyph(win, x0, y1, "└", style);
+    writeGlyph(win, x1, y1, "┘", style);
+    var x = x0 + 1;
+    while (x < x1) : (x += 1) {
+        writeGlyph(win, x, y0, "─", style);
+        writeGlyph(win, x, y1, "─", style);
+    }
+    var y = y0 + 1;
+    while (y < y1) : (y += 1) {
+        writeGlyph(win, x0, y, "│", style);
+        writeGlyph(win, x1, y, "│", style);
+    }
+}
+
+/// One day-cell interior: number row (full-width highlight when selected),
+/// then either event-title lines (wide cells) or a dot row (narrow cells).
 fn drawDayCell(
     cell: vaxis.Window,
     scratch: std.mem.Allocator,
@@ -167,15 +236,12 @@ fn drawDayCell(
     }
     const label = std.fmt.allocPrint(scratch, "{d: >3}", .{date.day}) catch return;
     printAt(cell, 0, 0, label, number_style);
-    if (is_today and !is_selected) {
-        printAt(cell, 4, 0, "·", theme.today);
-    }
 
     const snap = snapshot orelse return;
     const count = snap.countOnDay(date, state.zone);
     if (count == 0) return;
 
-    if (cell.width >= titles_from_width and cell.height >= 3) {
+    if (cell.width >= titles_from_width and cell.height >= 2) {
         drawCellTitles(cell, scratch, snap, date, state, count);
     } else {
         drawCellDots(cell, scratch, snap, date, state, count);
@@ -251,7 +317,8 @@ fn drawPeek(
     state: State,
     layout: Layout,
 ) void {
-    const row = rows_above_grid + layout.weeks * layout.cell_height + 1;
+    // +1 past the grid's closing bottom edge, +1 breathing room.
+    const row = rows_above_grid + layout.weeks * layout.cell_height + 2;
     if (row + 1 >= win.height) return;
     const snap = snapshot orelse return;
     const left = layout.left + 1;
@@ -317,4 +384,9 @@ fn printAt(win: vaxis.Window, x: u16, y: u16, text: []const u8, style: vaxis.Sty
     if (y >= win.height or x >= win.width) return;
     const child = win.child(.{ .x_off = x, .y_off = y, .width = win.width - x, .height = 1 });
     _ = child.printSegment(.{ .text = text, .style = style }, .{});
+}
+
+fn writeGlyph(win: vaxis.Window, x: u16, y: u16, glyph: []const u8, style: vaxis.Style) void {
+    if (y >= win.height or x >= win.width) return;
+    win.writeCell(x, y, .{ .char = .{ .grapheme = glyph, .width = 1 }, .style = style });
 }
