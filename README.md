@@ -24,6 +24,22 @@ ical-calendar-tui --daemon     # headless poll + notify (launchd)
 ical-calendar-tui --agenda     # print today's events and exit
 ```
 
+## Keys
+
+| Key | Where | Action |
+|---|---|---|
+| `← →` / `h l` | month, day | previous / next day |
+| `↑ ↓` / `k j` | month | same weekday ± a week |
+| `↑ ↓` / `k j` | day | select event · detail: scroll |
+| `[ ]` / `PgUp PgDn` | month | previous / next month |
+| `Enter` | month → day → detail | drill down |
+| `Esc` | anywhere | back / close |
+| `t` | anywhere | jump to today |
+| `r` | anywhere | refresh now |
+| `o` / `c` | detail | open / copy video link or url |
+| `?` | anywhere | help overlay |
+| `q` / `Ctrl-C` | anywhere | quit |
+
 ## Toolchain
 
 Pinned at milestone 0 (see SPEC §3):

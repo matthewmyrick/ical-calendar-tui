@@ -58,6 +58,9 @@ test {
     _ = @import("calendar/source.zig");
     _ = @import("calendar/time.zig");
     _ = @import("ui/month.zig");
+    _ = @import("ui/day.zig");
+    _ = @import("ui/detail.zig");
+    _ = @import("ui/help.zig");
     _ = @import("ui/statusbar.zig");
     _ = @import("ui/theme.zig");
 }
