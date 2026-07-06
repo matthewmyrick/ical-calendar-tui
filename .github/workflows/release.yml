@@ -1,56 +1,97 @@
-# Tag push v* -> build, package, publish a GitHub Release.
-# Cut releases with scripts/release.sh, which tags only after local gates
-# pass and verifies the tag matches build.zig.zon's version.
+# Continuous release: every merge to main that touches code publishes a
+# GitHub Release with an auto-computed version.
+#
+#   default                     -> patch bump   (v0.6.0 -> v0.6.1)
+#   "[release:minor]" in commit -> minor bump   (v0.6.1 -> v0.7.0)
+#   "[release:major]" in commit -> major bump   (v0.7.0 -> v1.0.0)
+#   "[skip release]"  in commit -> no release (CI still runs)
+#
+# Docs-only merges skip via the paths filter. The binary's --version comes
+# from the computed tag (-Dversion); local builds report "<manifest>-dev".
 name: release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths:
+      - "src/**"
+      - "native/**"
+      - "launchd/**"
+      - "scripts/**"
+      - "testdata/**"
+      - "build.zig"
+      - "build.zig.zon"
+      - ".github/workflows/release.yml"
+
+# Serialize releases so concurrent merges can't compute the same next tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
-  contents: write # create the release + upload assets
+  contents: write # create the tag + release, upload assets
 
 jobs:
   release:
-    runs-on: macos-15 # arm64-only for now; x86_64 cross-compile is blocked
-    # on SDK header quirks in the ObjC shim (see build.zig sysroot note)
+    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    runs-on: macos-15 # arm64-only; x86_64 blocked on SDK quirks (build.zig)
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history: version comes from the latest tag
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0 # keep in lockstep with .zigversion
-
-      - name: tag matches build.zig.zon version
-        run: |
-          ZON_VERSION=$(sed -n 's/.*\.version = "\(.*\)".*/\1/p' build.zig.zon | head -1)
-          if [ "v$ZON_VERSION" != "$GITHUB_REF_NAME" ]; then
-            echo "tag $GITHUB_REF_NAME != build.zig.zon version v$ZON_VERSION" >&2
-            exit 1
-          fi
 
       - name: gates
         run: |
           zig fmt --check .
           zig build test --summary all
 
+      - name: compute next version
+        id: version
+        run: |
+          LATEST=$(git describe --tags --abbrev=0 --match 'v*')
+          BASE=${LATEST#v}
+          IFS=. read -r MAJOR MINOR PATCH <<< "$BASE"
+          PATCH=${PATCH:-0} # milestone tags like v0.5 had no patch part
+          MESSAGE=$(git log -1 --pretty=%B)
+          if echo "$MESSAGE" | grep -qF '[release:major]'; then
+            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+          elif echo "$MESSAGE" | grep -qF '[release:minor]'; then
+            MINOR=$((MINOR + 1)); PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+          TAG="v$MAJOR.$MINOR.$PATCH"
+          echo "computed $LATEST -> $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
       - name: build (ReleaseSafe, arm64)
-        run: zig build -Doptimize=ReleaseSafe
+        run: zig build -Doptimize=ReleaseSafe -Dversion="${TAG#v}"
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
 
       - name: package
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
+          ./zig-out/bin/ical-calendar-tui --version
           STAGE=dist/ical-calendar-tui
           mkdir -p "$STAGE"
           cp zig-out/bin/ical-calendar-tui "$STAGE/"
           cp -R launchd scripts README.md "$STAGE/"
-          TARBALL="ical-calendar-tui-$GITHUB_REF_NAME-macos-arm64.tar.gz"
+          TARBALL="ical-calendar-tui-$TAG-macos-arm64.tar.gz"
           tar -czf "dist/$TARBALL" -C dist ical-calendar-tui
           (cd dist && shasum -a 256 "$TARBALL" > checksums.txt)
 
-      - name: publish release
+      - name: publish release (creates the tag)
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "$TAG" \
             dist/*.tar.gz dist/checksums.txt \
-            --title "ical-calendar-tui $GITHUB_REF_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "ical-calendar-tui $TAG" \
             --generate-notes

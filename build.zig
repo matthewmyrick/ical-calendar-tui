@@ -1,7 +1,8 @@
 const std = @import("std");
 
-/// Single source of truth for the version; surfaces as `--version` and in
-/// release artifact names (scripts/release.sh checks the git tag matches).
+/// Release versions come from git tags: the release workflow computes the
+/// next tag on every merge to main and injects it via -Dversion. Local
+/// builds fall back to the manifest version marked "-dev".
 const manifest = @import("build.zig.zon");
 
 pub fn build(b: *std.Build) void {
@@ -29,8 +30,13 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addAnonymousImport("Info.plist", .{
         .root_source_file = b.path("native/Info.plist"),
     });
+    const version = b.option(
+        []const u8,
+        "version",
+        "Release version (CI injects the computed tag; default: manifest + -dev)",
+    ) orelse manifest.version ++ "-dev";
     const build_options = b.addOptions();
-    build_options.addOption([]const u8, "version", manifest.version);
+    build_options.addOption([]const u8, "version", version);
     exe.root_module.addOptions("build_options", build_options);
     addNativeBits(b, exe.root_module);
     b.installArtifact(exe);

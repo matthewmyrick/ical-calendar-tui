@@ -104,16 +104,19 @@ Zig wrapper, and `ek_free` semantics together — the header is the contract.
 
 ## 6. Versioning & releases
 
-- Semver, `0.x` while the owner is still shaking v1 out; `v0.<milestone>`
-  tags marked milestone completions during the initial build.
-- **The version lives in `build.zig.zon`** (`.version`) — build.zig imports
-  it, so `--version` and artifact names always agree with the tag. Bump it
-  in its own commit before releasing.
-- **Cut a release:** `scripts/release.sh`. It runs the gates (fmt, tests,
-  ReleaseSafe build), tags `v<zon-version>`, and pushes; the `release`
-  GitHub workflow rebuilds on a macOS arm64 runner, re-runs the gates,
-  verifies tag == zon version, and publishes the tarball + sha256 to
-  GitHub Releases.
+- **Releases are continuous**: every push to main that touches code
+  (paths filter in `.github/workflows/release.yml`) auto-publishes a
+  GitHub Release. The workflow computes the next version from the latest
+  `v*` tag, builds ReleaseSafe on a macOS arm64 runner, and uploads the
+  tarball + sha256. There is no manual release step.
+- **Steering the bump from the commit message** (subject or body):
+  - default → patch (`v0.6.0` → `v0.6.1`)
+  - `[release:minor]` → minor, `[release:major]` → major
+  - `[skip release]` → no release (CI gates still run)
+- **Version at build time**: git tags are the source of truth; CI injects
+  the computed tag via `-Dversion`. Local builds report
+  `<build.zig.zon version>-dev` — if `--version` doesn't end in `-dev`,
+  you're holding a release binary.
 - Artifacts: `ical-calendar-tui-vX.Y.Z-macos-arm64.tar.gz` containing the
   binary, `launchd/`, `scripts/`, and the README. arm64-only for now —
   x86_64 cross-compilation is blocked on Apple SDK header quirks in the
