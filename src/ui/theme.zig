@@ -3,6 +3,7 @@
 //! transparency-friendly, no painted bg.
 
 const vaxis = @import("vaxis");
+const event_mod = @import("../calendar/event.zig");
 
 /// Published catppuccin-mocha hex values.
 pub const mocha = struct {
@@ -59,3 +60,15 @@ pub const accent: vaxis.Style = .{ .fg = color(mocha.mauve) };
 pub const warning: vaxis.Style = .{ .fg = color(mocha.yellow) };
 pub const err: vaxis.Style = .{ .fg = color(mocha.red), .bold = true };
 pub const ok: vaxis.Style = .{ .fg = color(mocha.green) };
+
+/// RSVP status color, shared by day and detail views: green yes, red no,
+/// yellow maybe, bold-yellow "you haven't answered".
+pub fn rsvpStyle(rsvp: event_mod.Rsvp) vaxis.Style {
+    return switch (rsvp) {
+        .accepted => ok,
+        .declined => err,
+        .tentative => warning,
+        .needs_action => .{ .fg = color(mocha.yellow), .bold = true },
+        .unknown => subtle,
+    };
+}

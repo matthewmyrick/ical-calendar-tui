@@ -12,13 +12,14 @@ pub const Rsvp = enum {
     needs_action,
     unknown,
 
-    /// Single-cell glyph for lists: your RSVP at a glance.
+    /// Single-cell glyph for lists: your RSVP at a glance. The open circle
+    /// reads as "unanswered" — distinct from tentative's deliberate "?".
     pub fn glyph(self: Rsvp) []const u8 {
         return switch (self) {
             .accepted => "✓",
             .declined => "✗",
             .tentative => "?",
-            .needs_action => "·",
+            .needs_action => "○",
             .unknown => " ",
         };
     }

@@ -77,21 +77,24 @@ fn drawEventLine(
         }) catch return;
     };
 
-    const line = std.fmt.allocPrint(scratch, " {s} {s} {s}  [{s}] {s}", .{
-        if (is_selected) "▶" else " ",
-        when,
-        event.title,
-        event.calendar_name,
-        event.self_rsvp.glyph(),
-    }) catch return;
-
-    const style: vaxis.Style = if (is_selected)
+    const line_style: vaxis.Style = if (is_selected)
         theme.selected
     else if (event.all_day)
         theme.subtle
     else
         .{ .fg = theme.calendarColor(event.calendar_color) };
-    printAt(win, 1, row, line, style);
+
+    // Your RSVP leads the line in a fixed column with its own color, so an
+    // unanswered invitation (yellow ○) is scannable down the list.
+    const selector = std.fmt.allocPrint(scratch, " {s} ", .{if (is_selected) "▶" else " "}) catch return;
+    printAt(win, 1, row, selector, line_style);
+    const glyph_style = if (is_selected) line_style else theme.rsvpStyle(event.self_rsvp);
+    printAt(win, 4, row, event.self_rsvp.glyph(), glyph_style);
+
+    const rest = std.fmt.allocPrint(scratch, "{s} {s}  [{s}]", .{
+        when, event.title, event.calendar_name,
+    }) catch return;
+    printAt(win, 6, row, rest, line_style);
 }
 
 fn printAt(win: vaxis.Window, x: u16, y: u16, text: []const u8, style: vaxis.Style) void {

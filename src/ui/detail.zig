@@ -81,7 +81,7 @@ fn buildLines(
         append(buffer, &count, .{ .text = header, .style = theme.accent });
 
         const you = std.fmt.allocPrint(scratch, "{s} you", .{event.self_rsvp.glyph()}) catch return buffer[0..count];
-        append(buffer, &count, .{ .text = you, .style = theme.text, .indent = 2 });
+        append(buffer, &count, .{ .text = you, .style = theme.rsvpStyle(event.self_rsvp), .indent = 2 });
 
         const shown = @min(event.attendees.len, max_attendees_shown);
         for (event.attendees[0..shown]) |attendee| {
@@ -89,7 +89,7 @@ fn buildLines(
             const text = std.fmt.allocPrint(scratch, "{s} {s: <20} {s}", .{
                 attendee.rsvp.glyph(), name, attendee.email,
             }) catch return buffer[0..count];
-            append(buffer, &count, .{ .text = text, .style = rsvpStyle(attendee.rsvp), .indent = 2 });
+            append(buffer, &count, .{ .text = text, .style = theme.rsvpStyle(attendee.rsvp), .indent = 2 });
         }
         if (event.attendees.len > shown) {
             const more = std.fmt.allocPrint(scratch, "+{d} more", .{event.attendees.len - shown}) catch return buffer[0..count];
@@ -197,15 +197,6 @@ fn appendWrapped(buffer: []Line, count: *usize, text: []const u8, width: u16, st
         }
         append(buffer, count, .{ .text = rest, .style = style, .indent = 2 });
     }
-}
-
-fn rsvpStyle(rsvp: event_mod.Rsvp) vaxis.Style {
-    return switch (rsvp) {
-        .accepted => theme.ok,
-        .declined => theme.err,
-        .tentative => theme.warning,
-        .needs_action, .unknown => theme.subtle,
-    };
 }
 
 fn printAt(win: vaxis.Window, x: u16, y: u16, text: []const u8, style: vaxis.Style) void {
