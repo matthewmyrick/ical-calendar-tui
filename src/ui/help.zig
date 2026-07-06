@@ -16,8 +16,9 @@ const Row = struct {
 /// Single source of truth for the overlay; update alongside README keys.
 const rows = [_]Row{
     .{ .section = "everywhere", .keys = "?", .action = "toggle this help" },
-    .{ .keys = "q / Ctrl-C", .action = "quit" },
-    .{ .keys = "Esc", .action = "back / close" },
+    .{ .keys = "Q / Ctrl-C", .action = "quit" },
+    .{ .keys = "q / Esc", .action = "back / close" },
+    .{ .keys = "/", .action = "fuzzy-search events" },
     .{ .keys = "r", .action = "refresh now" },
     .{ .keys = "t", .action = "jump to today" },
     .{ .section = "month", .keys = "← → / h l", .action = "previous / next day" },
@@ -30,6 +31,9 @@ const rows = [_]Row{
     .{ .section = "event detail", .keys = "↑ ↓ / k j", .action = "scroll" },
     .{ .keys = "o", .action = "open video link / url" },
     .{ .keys = "c", .action = "copy link to clipboard" },
+    .{ .section = "search", .keys = "type", .action = "filter events (fuzzy)" },
+    .{ .keys = "↑ ↓", .action = "select result" },
+    .{ .keys = "Enter", .action = "open event detail" },
 };
 
 const keys_column_width = 18;

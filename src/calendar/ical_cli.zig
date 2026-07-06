@@ -145,10 +145,13 @@ pub fn parse(
             };
         }
 
+        // Flatten HTML (Google/Exchange notes) before link detection so
+        // detected URLs never end at a markup boundary like "...<br>".
+        const notes = try event_mod.htmlToText(arena, raw.notes);
         const video_link = if (raw.conference_url.len > 0)
             raw.conference_url
         else
-            event_mod.detectVideoLink(&.{ raw.url, raw.location, raw.notes }) orelse "";
+            event_mod.detectVideoLink(&.{ raw.url, raw.location, notes }) orelse "";
 
         out.* = .{
             .id = raw.id,
@@ -160,7 +163,7 @@ pub fn parse(
             .end = end,
             .all_day = raw.all_day,
             .location = raw.location,
-            .notes = raw.notes,
+            .notes = notes,
             .url = raw.url,
             .video_link = video_link,
             .attendees = attendees,

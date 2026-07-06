@@ -287,8 +287,12 @@ pub const Event = struct {
 
 ## 7. TUI specification
 
-Three stacked views + overlays. `Esc` always goes back/up; `q` quits from any
-view (with no confirmation — this is a viewer).
+Three stacked views + overlays. `Esc` **and** `q` go back/up; `Q` (shift) or
+`Ctrl-C` quits from any view with no confirmation — this is a viewer.
+(Originally `q` quit directly; owner feedback moved quit to `Q` so a stray
+`q` in a nested view backs out instead of exiting.) `/` opens fuzzy event
+search from anywhere: type to filter titles (case-insensitive subsequence),
+`↑`/`↓` select, `Enter` jumps to the event's detail view.
 
 ### 7a. Month view (home)
 
@@ -326,9 +330,10 @@ view (with no confirmation — this is a viewer).
 | `[` `]` (and `PgUp` `PgDn`) | previous / next month |
 | `t` | jump to today |
 | `Enter` | open Day view for the selected day |
+| `/` | fuzzy event search |
 | `r` | force refresh now |
 | `?` | help overlay |
-| `q` / `Ctrl-C` | quit |
+| `Q` / `Ctrl-C` | quit |
 
 ### 7b. Day view
 

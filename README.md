@@ -59,12 +59,13 @@ are an error):
 | `↑ ↓` / `k j` | day | select event · detail: scroll |
 | `[ ]` / `PgUp PgDn` | month | previous / next month |
 | `Enter` | month → day → detail | drill down |
-| `Esc` | anywhere | back / close |
+| `q` / `Esc` | anywhere | back / close |
+| `/` | anywhere | fuzzy-search events (type, `↑↓`, `Enter`) |
 | `t` | anywhere | jump to today |
 | `r` | anywhere | refresh now |
 | `o` / `c` | detail | open / copy video link or url |
 | `?` | anywhere | help overlay |
-| `q` / `Ctrl-C` | anywhere | quit |
+| `Q` / `Ctrl-C` | anywhere | quit |
 
 ## Toolchain
 

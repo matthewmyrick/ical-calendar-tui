@@ -117,6 +117,84 @@ pub fn lessThan(_: void, a: Event, b: Event) bool {
     return std.mem.lessThan(u8, a.title, b.title);
 }
 
+/// Google/Exchange event notes arrive as HTML fragments (<b>, <br>, &amp;).
+/// Flatten to plain text: <br>/<p>/<li> boundaries become newlines (• for
+/// list items), all other tags are stripped, common entities decode. Returns
+/// the input slice untouched when there's no markup; otherwise the result is
+/// owned by `arena` (snapshot lifetime).
+pub fn htmlToText(arena: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error![]const u8 {
+    if (std.mem.indexOfAny(u8, text, "<&") == null) return text;
+
+    // Output never exceeds input: tags shrink to 0–2 bytes, entities shrink.
+    var out = try arena.alloc(u8, text.len);
+    var out_len: usize = 0;
+    var i: usize = 0;
+    while (i < text.len) {
+        switch (text[i]) {
+            '<' => {
+                const close = std.mem.indexOfScalarPos(u8, text, i + 1, '>') orelse {
+                    out[out_len] = '<'; // stray bracket, keep it
+                    out_len += 1;
+                    i += 1;
+                    continue;
+                };
+                const tag = std.mem.trim(u8, text[i + 1 .. close], "/ ");
+                if (startsWithIgnoreCase(tag, "br") or startsWithIgnoreCase(tag, "p") or
+                    startsWithIgnoreCase(tag, "div") or startsWithIgnoreCase(tag, "ul") or
+                    startsWithIgnoreCase(tag, "ol"))
+                {
+                    // Tag boundaries collapse to at most one newline.
+                    if (out_len > 0 and out[out_len - 1] != '\n') {
+                        out[out_len] = '\n';
+                        out_len += 1;
+                    }
+                } else if (startsWithIgnoreCase(tag, "li")) {
+                    if (out_len > 0 and out[out_len - 1] != '\n') {
+                        out[out_len] = '\n';
+                        out_len += 1;
+                    }
+                }
+                i = close + 1;
+            },
+            '&' => {
+                const Entity = struct { name: []const u8, replacement: []const u8 };
+                const entities = [_]Entity{
+                    .{ .name = "&amp;", .replacement = "&" },
+                    .{ .name = "&lt;", .replacement = "<" },
+                    .{ .name = "&gt;", .replacement = ">" },
+                    .{ .name = "&quot;", .replacement = "\"" },
+                    .{ .name = "&#39;", .replacement = "'" },
+                    .{ .name = "&apos;", .replacement = "'" },
+                    .{ .name = "&nbsp;", .replacement = " " },
+                };
+                const matched = for (entities) |entity| {
+                    if (std.mem.startsWith(u8, text[i..], entity.name)) break entity;
+                } else null;
+                if (matched) |entity| {
+                    @memcpy(out[out_len..][0..entity.replacement.len], entity.replacement);
+                    out_len += entity.replacement.len;
+                    i += entity.name.len;
+                } else {
+                    out[out_len] = '&';
+                    out_len += 1;
+                    i += 1;
+                }
+            },
+            else => {
+                out[out_len] = text[i];
+                out_len += 1;
+                i += 1;
+            },
+        }
+    }
+    return std.mem.trim(u8, out[0..out_len], "\n ");
+}
+
+fn startsWithIgnoreCase(text: []const u8, prefix: []const u8) bool {
+    if (text.len < prefix.len) return false;
+    return std.ascii.eqlIgnoreCase(text[0..prefix.len], prefix);
+}
+
 test "video link detection: provider table" {
     const cases = [_]struct { text: []const u8, want: ?[]const u8 }{
         .{ .text = "https://zoom.us/j/91441122334", .want = "https://zoom.us/j/91441122334" },
@@ -136,6 +214,28 @@ test "video link detection: provider table" {
             try std.testing.expectEqual(@as(?[]const u8, null), got);
         }
     }
+}
+
+test "htmlToText: Google Calendar notes flatten to readable text" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const google_notes =
+        "<b>Infra Monthly Sync</b> (food provided!)<br><br>A quick review:<br><br>" ++
+        "1. <b>Downtimes &amp; bugs</b> (10 min)<br>2. <b>Q&amp;A</b>";
+    const cleaned = try htmlToText(arena, google_notes);
+    try std.testing.expectEqualStrings(
+        "Infra Monthly Sync (food provided!)\nA quick review:\n1. Downtimes & bugs (10 min)\n2. Q&A",
+        cleaned,
+    );
+
+    // Plain text passes through as the same slice, no copy.
+    const plain = "Daily sync. Bring blockers.";
+    try std.testing.expectEqual(plain.ptr, (try htmlToText(arena, plain)).ptr);
+
+    // Stray brackets and unknown entities survive literally.
+    try std.testing.expectEqualStrings("a < b &weird; c", try htmlToText(arena, "a < b &weird; c"));
 }
 
 test "videoProviderName maps links to display names" {

@@ -15,6 +15,7 @@ const month_view = @import("ui/month.zig");
 const day_view = @import("ui/day.zig");
 const detail_view = @import("ui/detail.zig");
 const help_view = @import("ui/help.zig");
+const search_view = @import("ui/search.zig");
 const statusbar = @import("ui/statusbar.zig");
 
 const CivilDate = time_mod.CivilDate;
@@ -44,6 +45,10 @@ pub const App = struct {
     day_index: usize = 0,
     detail_scroll: usize = 0,
     help_visible: bool = false,
+    search_active: bool = false,
+    search_buffer: [search_view.max_query]u8 = undefined, // valid up to search_len
+    search_len: usize = 0,
+    search_index: usize = 0,
     scratch_buffer: [scratch_size]u8 = undefined, // written before every read via FixedBufferAllocator
     /// Stable copy of a link for subprocess use after the lock is dropped.
     link_buffer: [512]u8 = undefined,
@@ -64,7 +69,17 @@ pub const App = struct {
     }
 
     pub fn handleKey(self: *App, key: vaxis.Key) void {
-        if (key.matches('q', .{}) or key.matches('c', .{ .ctrl = true })) {
+        if (key.matches('c', .{ .ctrl = true })) {
+            self.should_quit = true;
+            return;
+        }
+        // Search consumes every key while open — typed text must not
+        // trigger bindings (a query containing "q" is not "back").
+        if (self.search_active) {
+            self.handleSearchKey(key);
+            return;
+        }
+        if (key.matches('Q', .{})) {
             self.should_quit = true;
             return;
         }
@@ -75,6 +90,16 @@ pub const App = struct {
         }
         if (key.matches('?', .{})) {
             self.help_visible = true;
+            return;
+        }
+        if (key.matches('/', .{})) {
+            self.search_active = true;
+            self.search_len = 0;
+            self.search_index = 0;
+            return;
+        }
+        if (key.matches('q', .{}) or key.matches(vaxis.Key.escape, .{})) {
+            self.back();
             return;
         }
         if (key.matches('r', .{})) {
@@ -92,6 +117,65 @@ pub const App = struct {
             .day => self.handleDayKey(key),
             .detail => self.handleDetailKey(key),
         }
+    }
+
+    /// One level up the view stack; no-op at the month view (Q quits).
+    fn back(self: *App) void {
+        switch (self.view) {
+            .month => {},
+            .day => self.view = .month,
+            .detail => self.view = .day,
+        }
+    }
+
+    fn handleSearchKey(self: *App, key: vaxis.Key) void {
+        if (key.matches(vaxis.Key.escape, .{})) {
+            self.search_active = false;
+        } else if (key.matches(vaxis.Key.enter, .{})) {
+            self.jumpToSearchResult();
+        } else if (key.matches(vaxis.Key.up, .{})) {
+            self.search_index -|= 1;
+        } else if (key.matches(vaxis.Key.down, .{})) {
+            self.search_index += 1; // clamped against results in draw
+        } else if (key.matches(vaxis.Key.backspace, .{})) {
+            // Drop the last UTF-8 sequence, not just the last byte.
+            while (self.search_len > 0) {
+                self.search_len -= 1;
+                if (self.search_buffer[self.search_len] & 0xC0 != 0x80) break;
+            }
+        } else if (key.text) |text| {
+            if (self.search_len + text.len <= self.search_buffer.len) {
+                @memcpy(self.search_buffer[self.search_len..][0..text.len], text);
+                self.search_len += text.len;
+                self.search_index = 0;
+            }
+        }
+    }
+
+    fn jumpToSearchResult(self: *App) void {
+        self.lockPoller();
+        defer self.unlockPoller();
+        const snapshot = self.poller.snapshot orelse return;
+
+        var results_buffer: [search_view.max_results]search_view.Match = undefined;
+        const results = search_view.search(
+            snapshot.events,
+            self.search_buffer[0..self.search_len],
+            &results_buffer,
+        );
+        if (results.len == 0) return;
+        const target = results[@min(self.search_index, results.len - 1)].event;
+
+        self.selected = time_mod.localDate(target.start, self.zone);
+        self.search_active = false;
+        self.view = .detail;
+        self.detail_scroll = 0;
+        // Point the day cursor at the target so Esc lands on it in Day view.
+        var events_buffer: [day_view.max_events]event_mod.Event = undefined;
+        const day_events = snapshot.eventsOnDay(&events_buffer, self.selected, self.zone);
+        self.day_index = for (day_events, 0..) |event, i| {
+            if (event.start == target.start and std.mem.eql(u8, event.id, target.id)) break i;
+        } else 0;
     }
 
     fn handleMonthKey(self: *App, key: vaxis.Key) void {
@@ -114,9 +198,7 @@ pub const App = struct {
     }
 
     fn handleDayKey(self: *App, key: vaxis.Key) void {
-        if (key.matches(vaxis.Key.escape, .{})) {
-            self.view = .month;
-        } else if (key.matches(vaxis.Key.left, .{}) or key.matches('h', .{})) {
+        if (key.matches(vaxis.Key.left, .{}) or key.matches('h', .{})) {
             self.moveSelection(-1);
             self.day_index = 0;
         } else if (key.matches(vaxis.Key.right, .{}) or key.matches('l', .{})) {
@@ -140,9 +222,7 @@ pub const App = struct {
     }
 
     fn handleDetailKey(self: *App, key: vaxis.Key) void {
-        if (key.matches(vaxis.Key.escape, .{})) {
-            self.view = .day;
-        } else if (key.matches(vaxis.Key.up, .{}) or key.matches('k', .{})) {
+        if (key.matches(vaxis.Key.up, .{}) or key.matches('k', .{})) {
             self.detail_scroll -|= 1;
         } else if (key.matches(vaxis.Key.down, .{}) or key.matches('j', .{})) {
             self.detail_scroll += 1; // clamped against content in draw
@@ -287,5 +367,14 @@ pub const App = struct {
             .consecutive_failures = self.poller.consecutive_failures,
         });
         if (self.help_visible) help_view.draw(win);
+        if (self.search_active) {
+            const events: []const event_mod.Event = if (snapshot) |snap| snap.events else &.{};
+            const result_count = search_view.draw(win, scratch, events, .{
+                .query = self.search_buffer[0..self.search_len],
+                .selected_index = self.search_index,
+                .zone = self.zone,
+            });
+            if (result_count > 0) self.search_index = @min(self.search_index, result_count - 1);
+        }
     }
 };
