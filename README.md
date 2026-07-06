@@ -50,4 +50,16 @@ Pinned at milestone 0 (see SPEC §3):
 | [libvaxis](https://github.com/rockorager/libvaxis) | 0.6.0 @ `ca781b3c` (pinned by hash in `build.zig.zon`) | `zig fetch` |
 | [`ical`](https://ical.sidv.dev/) | 0.12.1 | `brew tap BRO3886/tap && brew install ical` |
 
-Native EventKit shim lands at milestone 4.
+Native EventKit shim landed at milestone 4 (`source: eventkit`, with
+`ical_cli` fallback).
+
+## Memory
+
+Measured idle RSS, ReleaseSafe, 45-day window (recorded per release —
+SPEC §12): **~21 MB** with the native EventKit source (≈10 MB of that is
+EventKit/AppKit framework-resident pages), **~11 MB** with the `ical_cli`
+source. App-controlled memory is arena-bounded and flat over uptime.
+
+macOS permission note: TCC ties the calendar grant to the binary's identity;
+after rebuilding you may need to re-grant. Reset for testing with
+`tccutil reset Calendar dev.matthewmyrick.ical-calendar-tui`.

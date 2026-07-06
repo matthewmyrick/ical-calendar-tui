@@ -5,11 +5,13 @@
 const std = @import("std");
 const event_mod = @import("event.zig");
 const ical_cli = @import("ical_cli.zig");
+const eventkit = @import("eventkit.zig");
 
-pub const FetchError = ical_cli.FetchError;
+pub const FetchError = eventkit.FetchError;
 
 pub const CalendarSource = union(enum) {
     ical_cli: ical_cli.IcalCliSource,
+    eventkit: eventkit.EventKitSource,
 
     /// Fetch everything in [from, to] (unix seconds UTC). All returned memory
     /// is allocated into `arena` (the snapshot's arena) and freed wholesale.
@@ -21,10 +23,11 @@ pub const CalendarSource = union(enum) {
     ) FetchError![]event_mod.Event {
         return switch (self.*) {
             .ical_cli => |*source| source.fetch(arena, from, to),
+            .eventkit => |*source| source.fetch(arena, from, to),
         };
     }
 
-    /// Short name for the status bar ("source: ical_cli").
+    /// Short name for the status bar ("source: eventkit").
     pub fn name(self: CalendarSource) []const u8 {
         return @tagName(self);
     }

@@ -11,9 +11,17 @@ const poller_mod = @import("poller.zig");
 const notifier_mod = @import("notify/notifier.zig");
 const sink_mod = @import("notify/sink.zig");
 const source_mod = @import("calendar/source.zig");
+const eventkit_mod = @import("calendar/eventkit.zig");
 const time_mod = @import("calendar/time.zig");
 
 pub const panic = vaxis.panic_handler;
+
+/// Info.plist embedded into the executable so TCC finds the calendar usage
+/// description in a bare (non-bundled) binary — SPEC §13, minus the
+/// -sectcreate linker flag (0.16's linker driver has no passthrough; an
+/// exported linksection constant produces the identical section).
+export const info_plist: [info_plist_bytes.len]u8 linksection("__TEXT,__info_plist") = info_plist_bytes.*;
+const info_plist_bytes = @embedFile("Info.plist");
 
 const Event = union(enum) {
     key_press: vaxis.Key,
@@ -46,9 +54,25 @@ pub fn main(init: std.process.Init) !void {
     var zone = time_mod.Zone.loadLocal(gpa, io);
     defer zone.deinit();
 
-    // Source selection: EventKit lands at M4; .auto and .eventkit both run
-    // the CLI source until then.
-    var source: source_mod.CalendarSource = .{ .ical_cli = .{ .gpa = gpa, .io = io } };
+    // Source selection (SPEC §5): .auto tries EventKit and falls back to
+    // the CLI; the access request may show the TCC prompt — before the TUI
+    // takes the terminal, so the dialog isn't hidden behind an alt screen.
+    var source: source_mod.CalendarSource = switch (config.source) {
+        .ical_cli => .{ .ical_cli = .{ .gpa = gpa, .io = io } },
+        .eventkit => blk: {
+            eventkit_mod.EventKitSource.requestAccess() catch {
+                return fail(io, "calendar access denied — grant it in System Settings → " ++
+                    "Privacy & Security → Calendars, or set .source = .ical_cli");
+            };
+            break :blk .{ .eventkit = .{ .gpa = gpa } };
+        },
+        .auto => blk: {
+            eventkit_mod.EventKitSource.requestAccess() catch {
+                break :blk .{ .ical_cli = .{ .gpa = gpa, .io = io } };
+            };
+            break :blk .{ .eventkit = .{ .gpa = gpa } };
+        },
+    };
 
     const sink = sink_mod.detect(gpa, io, init.environ_map, config.notify_sink);
     var notifier = try notifier_mod.Notifier.init(
@@ -161,6 +185,7 @@ test {
     _ = @import("poller.zig");
     _ = @import("snapshot.zig");
     _ = @import("calendar/event.zig");
+    _ = @import("calendar/eventkit.zig");
     _ = @import("calendar/ical_cli.zig");
     _ = @import("calendar/source.zig");
     _ = @import("calendar/time.zig");

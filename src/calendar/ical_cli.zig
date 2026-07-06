@@ -35,6 +35,9 @@ const IcalEvent = struct {
     all_day: bool = false,
     calendar: []const u8 = "",
     calendar_id: []const u8 = "",
+    /// Only the EventKit shim emits this; the CLI path joins `ical
+    /// calendars` by calendar_id instead.
+    calendar_color: []const u8 = "",
     location: []const u8 = "",
     notes: []const u8 = "",
     url: []const u8 = "",
@@ -150,7 +153,8 @@ pub fn parse(
         out.* = .{
             .id = raw.id,
             .calendar_name = raw.calendar,
-            .calendar_color = colorForCalendar(raw_calendars, raw.calendar_id),
+            .calendar_color = parseHexColor(raw.calendar_color) orelse
+                colorForCalendar(raw_calendars, raw.calendar_id),
             .title = raw.title,
             .start = start,
             .end = end,
