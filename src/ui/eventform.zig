@@ -13,9 +13,9 @@ pub const Mode = enum { add, edit };
 
 pub const Field = enum {
     title,
-    start,
-    end,
-    all_day,
+    date,
+    time,
+    until,
     calendar,
     location,
     invite,
@@ -23,22 +23,23 @@ pub const Field = enum {
     pub fn label(self: Field) []const u8 {
         return switch (self) {
             .title => "title   ",
-            .start => "when    ",
-            .end => "until   ",
-            .all_day => "all-day ",
+            .date => "date    ",
+            .time => "time    ",
+            .until => "until   ",
             .calendar => "calendar",
             .location => "location",
             .invite => "invite  ",
         };
     }
 
-    /// Grayed hint shown while the field is empty and inactive.
+    /// Grayed hint shown while the field is empty and inactive; the time
+    /// hint always shows so "blank = all-day" is discoverable.
     fn hint(self: Field, mode: Mode) []const u8 {
         return switch (self) {
             .title => "(required)",
-            .start => "(required — natural language ok: \"tomorrow 2pm\")",
-            .end => if (mode == .add) "(1h)" else "(unchanged)",
-            .all_day => "(y for all-day)",
+            .date => "(required — \"friday\" and \"jul 20\" work too)",
+            .time => "(e.g. 3pm or 15:00 · blank = all-day)",
+            .until => if (mode == .add) "(end time · blank = 1h)" else "(unchanged)",
             .calendar => if (mode == .add) "(default)" else "(unchanged)",
             .location => "",
             .invite => "(emails, comma-separated — sends invitations)",
@@ -89,8 +90,11 @@ pub fn draw(win: vaxis.Window, scratch: std.mem.Allocator, state: State) void {
         const is_active = i == state.active_index;
         const value = state.values[@intFromEnum(field)];
         const cursor: []const u8 = if (is_active) "▏" else "";
-        const hint: []const u8 = if (value.len == 0 and !is_active) field.hint(state.mode) else "";
-        const line = std.fmt.allocPrint(scratch, "{s}  {s}{s}{s}", .{
+        // The time hint stays visible while typing there — it's how
+        // "blank = all-day" gets discovered.
+        const show_hint = value.len == 0 and (!is_active or field == .time);
+        const hint: []const u8 = if (show_hint) field.hint(state.mode) else "";
+        const line = std.fmt.allocPrint(scratch, "{s}  {s}{s} {s}", .{
             field.label(), value, cursor, hint,
         }) catch return;
         printAt(box, 2, row, line, if (is_active) theme.text else theme.subtle);

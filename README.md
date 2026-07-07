@@ -80,7 +80,7 @@ are an error):
 | `Enter` | month → day → detail | drill down |
 | `q` / `Esc` | anywhere | back / close |
 | `/` | anywhere | fuzzy-search events (type, `↑↓`, `Enter`) |
-| `a` | anywhere | new event (form: title, when, until, all-day, calendar, location, invites — blank = skip) |
+| `a` | anywhere | new event — form with date + time fields (blank time = all-day; blank = skip) |
 | `y` `n` `m` | day, detail | RSVP: accept / decline / tentative |
 | `e` | day, detail | edit selected event (same form, prefilled) |
 | `t` | anywhere | jump to today |

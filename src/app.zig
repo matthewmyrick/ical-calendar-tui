@@ -328,12 +328,7 @@ pub const App = struct {
 
         switch (mode) {
             .add => {
-                // Prefill the date you're standing on; type the time after it.
-                self.setFormFieldFmt(.start, "{d:0>4}-{d:0>2}-{d:0>2} ", .{
-                    @as(u32, @intCast(self.selected.year)),
-                    self.selected.month,
-                    self.selected.day,
-                });
+                self.setFormFieldDate(.date, self.selected);
             },
             .edit => {
                 self.lockPoller();
@@ -349,15 +344,30 @@ pub const App = struct {
                 @memcpy(self.command_id_buffer[0..event.id.len], event.id);
                 self.command_id_len = event.id.len;
 
+                const start = time_mod.civilFromUnix(event.start, self.zone);
                 self.setFormField(.title, event.title);
-                self.setFormFieldTime(.start, event.start);
-                self.setFormFieldTime(.end, event.end);
-                if (event.all_day) self.setFormField(.all_day, "y");
+                self.setFormFieldDate(.date, start.date);
+                if (!event.all_day) {
+                    // Blank time means all-day, so all-day events leave it empty.
+                    self.setFormFieldFmt(.time, "{d:0>2}:{d:0>2}", .{
+                        start.time.hour, start.time.minute,
+                    });
+                    const end = time_mod.civilFromUnix(event.end, self.zone);
+                    self.setFormFieldFmt(.until, "{d:0>2}:{d:0>2}", .{
+                        end.time.hour, end.time.minute,
+                    });
+                }
                 self.setFormField(.calendar, event.calendar_name);
                 self.setFormField(.location, event.location);
             },
         }
         self.form_active = true;
+    }
+
+    fn setFormFieldDate(self: *App, field: eventform.Field, date: time_mod.CivilDate) void {
+        self.setFormFieldFmt(field, "{d:0>4}-{d:0>2}-{d:0>2}", .{
+            @as(u32, @intCast(date.year)), date.month, date.day,
+        });
     }
 
     fn setFormField(self: *App, field: eventform.Field, value: []const u8) void {
@@ -371,18 +381,6 @@ pub const App = struct {
         const i = @intFromEnum(field);
         const written = std.fmt.bufPrint(&self.form_buffers[i], fmt, args) catch return;
         self.form_lens[i] = written.len;
-    }
-
-    /// Local "YYYY-MM-DD HH:MM" — the format `ical` prints and parses.
-    fn setFormFieldTime(self: *App, field: eventform.Field, unix: i64) void {
-        const civil = time_mod.civilFromUnix(unix, self.zone);
-        self.setFormFieldFmt(field, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}", .{
-            @as(u32, @intCast(civil.date.year)),
-            civil.date.month,
-            civil.date.day,
-            civil.time.hour,
-            civil.time.minute,
-        });
     }
 
     fn formValue(self: *const App, field: eventform.Field) []const u8 {
@@ -432,12 +430,29 @@ pub const App = struct {
     /// date parsing and validation; we surface pass/fail.
     fn submitForm(self: *App) void {
         const title = self.formValue(.title);
-        const start = self.formValue(.start);
-        if (title.len == 0 or start.len == 0) {
-            self.flash = "title and when are required";
+        const date = self.formValue(.date);
+        const time = self.formValue(.time);
+        const until = self.formValue(.until);
+        if (title.len == 0 or date.len == 0) {
+            self.flash = "title and date are required";
             return;
         }
-        const all_day = std.ascii.startsWithIgnoreCase(self.formValue(.all_day), "y");
+        const all_day = time.len == 0;
+
+        // "<date> <time>" for ical's parser; the date alone for all-day.
+        var start_buffer: [2 * eventform.max_field]u8 = undefined;
+        const start = if (all_day)
+            date
+        else
+            std.fmt.bufPrint(&start_buffer, "{s} {s}", .{ date, time }) catch date;
+        // `until` is a time on the same date (or a date, for all-day spans).
+        var end_buffer: [2 * eventform.max_field]u8 = undefined;
+        const end = if (until.len == 0)
+            ""
+        else if (all_day)
+            until
+        else
+            std.fmt.bufPrint(&end_buffer, "{s} {s}", .{ date, until }) catch until;
 
         // Bounded argv assembly: base + 5 flag pairs + 8 invitations.
         var argv_buffer: [32][]const u8 = undefined;
@@ -470,9 +485,9 @@ pub const App = struct {
         }
         push(&argv_buffer, &argc, "-s");
         push(&argv_buffer, &argc, start);
-        if (self.formValue(.end).len > 0) {
+        if (end.len > 0) {
             push(&argv_buffer, &argc, "-e");
-            push(&argv_buffer, &argc, self.formValue(.end));
+            push(&argv_buffer, &argc, end);
         }
         if (self.formValue(.calendar).len > 0) {
             push(&argv_buffer, &argc, "-c");
