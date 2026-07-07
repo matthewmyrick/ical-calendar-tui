@@ -48,9 +48,12 @@ reset while testing: `tccutil reset Calendar dev.matthewmyrick.docket`.
 
 ## 3. Workflow
 
-- **Contributors: fork → branch → PR against `main`.** `main` is protected;
-  CI (fmt + tests + release build) must pass and the maintainer reviews
-  everything (CODEOWNERS). The maintainer may push directly.
+- **Everyone — including the maintainer — merges through PRs.** `main` is
+  protected with admin enforcement: no direct pushes, CI (fmt + tests +
+  release build) must pass. Contributors fork → branch → PR; the maintainer
+  reviews everything (CODEOWNERS) and, having write access, may merge their
+  own PRs once CI is green (zero-approval rule — GitHub forbids
+  self-approval, and requiring one would deadlock a solo maintainer).
 - **One logical change per PR**, and small, focused commits within it. A
   view, a bugfix, a provider row — each its own change. Never bundle an
   unrelated tweak into a feature PR; split it.
